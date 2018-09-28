@@ -70,10 +70,10 @@ sign() {
     sign_usage
     return
   fi
-  chart=$1
+  chart=$chart
   echo "Signing $chart"
-  shasum=$(openssl sha -sha256 $chart| awk '{ print $2 }')
-  chartyaml=$(tar -zxf $chart --exclude 'charts/' -O '*/Chart.yaml')
+  shasum=$(openssl sha256 -sha256 $chart| awk '{ print $2 }')
+  chartyaml=$(tar -zxf $chart --wildcards --exclude 'charts/' -O '*/Chart.yaml')
 c=$(cat << EOF
 $chartyaml
 
@@ -82,11 +82,24 @@ files:
   $chart: sha256:$shasum
 EOF
 )
-  keyuser=""
-  if [ "$keyname" != "" ]; then
-    keyuser="-u $keyname"
+  modearguments=""
+  pinentrymode=""
+  if [ "$interactive" == "0" ]; then
+      version=$(gpg --version | grep 'gpg (GnuPG)' | cut -d ' ' -f 3 | cut -d '.' -f 1)
+      if [ "$version" == "2" ]; then
+        pinentrymode=" --pinentry-mode loopback"
+      fi
+      modearguments="--quiet --batch"
   fi
-  echo "$c" | gpg --clearsign -o "$chart.prov" $keyuser
+  keyuser=""
+  passphrasetouse=""
+  if [ "$passphrase" != "" ]; then
+    passphrasetouse="--passphrase $passphrase"
+  fi
+  if [ "$keyname" != "" ]; then
+    keyuser=(-u "$keyname")
+  fi
+  echo "$c" | gpg --clearsign $modearguments $passphrasetouse $pinentrymode -o "$chart.prov" "${keyuser[@]}"
 }
 
 verify() {
@@ -110,7 +123,7 @@ verify() {
 }
 
 shasum() {
-  openssl sha -sha256 "$1" | awk '{ print $2 }'
+  openssl sha256 -sha256 "$1" | awk '{ print $2 }'
 }
 
 if [[ $# < 1 ]]; then
@@ -131,22 +144,33 @@ case "${1:-"help"}" in
       exit 1
     fi
     shift
-    # Name of the key to use. Overridden by -u
+    chart="$1"
+    shift
+    interactive="0"
     keyname=""
-    # Options, expected after verb
+    passphrase=""
     while [ "$1" != "" ]; do
       case $1 in
-        -u | --local-user)
-          keyname=$2
-          echo "Setting keyname to $keyname"
-          shift 2
+        -i)
+          interactive=1;
           ;;
-        *)
+        --passphrase)
+          shift
+          passphrase="$1"
+          echo "Setting passphrase"
+          ;;
+        -u | --local-user)
+          keyname="$2"
+          echo "Setting keyname to $keyname"
           break
           ;;
+        *)
+          ;;
       esac
+     shift
     done
-    sign $1 $keyname
+
+    sign $chart $interactive $passphrase $keyname
     ;;
   "verify"):
     if [[ $# < 2 ]]; then
